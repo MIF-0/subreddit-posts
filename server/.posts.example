@@ -1,0 +1,20 @@
+{
+    "main_post_info": {
+        "post_type":"link",
+        "body":"path/to/picture.jpg",
+        "title":"tittle",
+        "nsfw":false
+    },
+    "posts": [
+      {
+        "subreddit": "youareart",
+        "additional_title": "[f]",
+        "flair_id": "pic",
+        "flair_name": "pic",
+        "need_to_be_posted": false
+      },
+      {
+        "subreddit": "youareart"
+      }
+    ]
+}
