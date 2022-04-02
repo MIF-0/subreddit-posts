@@ -73,20 +73,34 @@ async fn upload(data: Data<InMemoryDataStore>) -> impl Responder {
         .or_else(|_| fs::read_to_string(".posts"))
         .expect("Something went wrong reading the file with posts");
 
+    let auth_token = data.retrieve_auth_token();
     let posts: Posts = serde_json::from_str(&content).expect("JSON was not well-formatted");
-    post(posts, data.retrieve_auth_token().as_str()).await;
+    post(posts, auth_token.as_str()).await;
+
+    try_post(".posts.possible", auth_token.as_str()).await;
+    try_post(".posts.promo_links", auth_token.as_str()).await;
+
     HttpResponse::Ok().body("Uploaded")
+}
+
+async fn try_post(file_name: &str, auth_token: &str) {
+    let content = fs::read_to_string(format!("server/{}", file_name))
+        .or_else(|_| fs::read_to_string(file_name));
+    if content.is_ok() {
+        let content = content.unwrap();
+        let posts: Posts = serde_json::from_str(&content).expect("JSON was not well-formatted");
+        post(posts, auth_token).await;
+    }
 }
 
 #[actix_web::get("/reddit/flairs")]
 async fn flairs(data: Data<InMemoryDataStore>) -> impl Responder {
-
     let content = fs::read_to_string("server/.subreddits")
         .or_else(|_| fs::read_to_string(".subreddits"))
         .expect("Something went wrong reading the file with posts");
 
     let flair_info = retrieve_flairs_for(content.split(", ").collect(),
-                                         data.retrieve_auth_token().as_str()
+                                         data.retrieve_auth_token().as_str(),
     ).await;
 
     info!("Retrieved flairs: {:?}", flair_info);
