@@ -1,20 +1,22 @@
 {
     "main_post_info": {
         "post_type":"link",
-        "body":"path/to/picture.jpg",
+        "body":"link to pic.jpeg",
         "title":"tittle",
-        "nsfw":false
+        "nsfw":false,
+        "comment": "Checkout this new comment"
     },
     "posts": [
       {
-        "subreddit": "youareart",
+        "subreddit": "subreddit_name_1",
         "additional_title": "[f]",
         "flair_id": "pic",
         "flair_name": "pic",
-        "need_to_be_posted": false
+        "need_to_be_posted": false,
+        "comment": "This is overriding comment"
       },
       {
-        "subreddit": "youareart"
+        "subreddit": "subreddit_name_2"
       }
     ]
 }

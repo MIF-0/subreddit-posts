@@ -75,7 +75,6 @@ async fn upload(data: Data<InMemoryDataStore>) -> impl Responder {
 
     let posts: Posts = serde_json::from_str(&content).expect("JSON was not well-formatted");
     post(posts, data.retrieve_auth_token().as_str()).await;
-
     HttpResponse::Ok().body("Uploaded")
 }
 
