@@ -2,13 +2,18 @@ use std::{fs, io};
 use actix_web::{App, HttpResponse, HttpServer, Responder};
 use actix_web::web::{Data, Query};
 use log::info;
+use reqwest::Client;
 use serde_derive::Deserialize;
+use subreddit_posts_logic::comment::delete_all_comments;
 use subreddit_posts_logic::data_store::DataStore;
 use subreddit_posts_logic::environment::Environment;
 use subreddit_posts_logic::flairs::retrieve_flairs_for;
 use subreddit_posts_logic::in_memory_data_store::InMemoryDataStore;
 use subreddit_posts_logic::login::{auth_token_for, request_login};
 use subreddit_posts_logic::post::{post, Posts};
+use subreddit_posts_logic::reddit_client::AuthRedditClient;
+use subreddit_posts_logic::user;
+use subreddit_posts_logic::user::info;
 
 #[actix_web::main]
 async fn main() -> io::Result<()> {
@@ -29,6 +34,7 @@ async fn main() -> io::Result<()> {
         .service(login_callback)
         .service(upload)
         .service(flairs)
+        .service(delete_comments)
     )
         .bind("127.0.0.1:9090")?
         .run()
@@ -75,21 +81,39 @@ async fn upload(data: Data<InMemoryDataStore>) -> impl Responder {
 
     let auth_token = data.retrieve_auth_token();
     let posts: Posts = serde_json::from_str(&content).expect("JSON was not well-formatted");
-    post(posts, auth_token.as_str()).await;
+    let client = AuthRedditClient::new(auth_token);
+    post(posts, &client).await;
 
-    try_post(".posts.possible", auth_token.as_str()).await;
-    try_post(".posts.promo_links", auth_token.as_str()).await;
+    try_post(".posts.possible", &client).await;
+    try_post(".posts.promo_links", &client).await;
 
     HttpResponse::Ok().body("Uploaded")
 }
 
-async fn try_post(file_name: &str, auth_token: &str) {
+#[actix_web::get("/reddit/comments/delete")]
+async fn delete_comments(data: Data<InMemoryDataStore>) -> impl Responder {
+    info!("Deleting all comments");
+
+    let auth_token = data.retrieve_auth_token();
+    let client = AuthRedditClient::new(auth_token);
+
+    let user = user::info(&client).await;
+    info!("user {:?}", user);
+
+    delete_all_comments(&user, &client).await;
+
+    info!("Deleted all comments");
+
+    HttpResponse::Ok().body("deleted")
+}
+
+async fn try_post(file_name: &str, client: &AuthRedditClient) {
     let content = fs::read_to_string(format!("server/{}", file_name))
         .or_else(|_| fs::read_to_string(file_name));
     if content.is_ok() {
         let content = content.unwrap();
         let posts: Posts = serde_json::from_str(&content).expect("JSON was not well-formatted");
-        post(posts, auth_token).await;
+        post(posts, client).await;
     }
 }
 
@@ -99,8 +123,10 @@ async fn flairs(data: Data<InMemoryDataStore>) -> impl Responder {
         .or_else(|_| fs::read_to_string(".subreddits"))
         .expect("Something went wrong reading the file with posts");
 
+
+    let client = AuthRedditClient::new(data.retrieve_auth_token());
     let flair_info = retrieve_flairs_for(content.split(", ").collect(),
-                                         data.retrieve_auth_token().as_str(),
+                                         &client,
     ).await;
 
     info!("Retrieved flairs: {:?}", flair_info);

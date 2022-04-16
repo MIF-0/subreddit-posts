@@ -6,6 +6,7 @@ use webbrowser;
 use crate::environment::Environment;
 use serde_derive::{Serialize, Deserialize};
 use crate::AuthToken;
+use crate::reddit_client::AuthRedditClient;
 
 //https://github.com/reddit-archive/reddit/wiki/OAuth2
 
@@ -44,11 +45,8 @@ pub async fn auth_token_for(code: &str, settings: Environment) -> AuthToken {
 
     };
 
-    let result = client.post("https://www.reddit.com/api/v1/access_token")
-        .basic_auth(settings.application_id.as_str(), Some(settings.application_secret.as_str()))
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .header("Accept-Language", "en-us")
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.90 Safari/537.36")
+    let result = AuthRedditClient::add_headers(client.post("https://www.reddit.com/api/v1/access_token")
+        .basic_auth(settings.application_id.as_str(), Some(settings.application_secret.as_str())))
         .body(serde_urlencoded::to_string(&data).expect("serialize issue during obtain auth token"))
         .send()
         .await;

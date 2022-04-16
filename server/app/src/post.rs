@@ -1,11 +1,9 @@
-use std::thread::Thread;
-use std::{thread, time};
-use log::info;
-use reqwest::Client;
+use log::{debug, info};
 use serde_derive::{Serialize, Deserialize};
 use serde_json::Value;
-use uuid::Uuid;
+use crate::comment::submit_comment;
 use crate::OAUTH_REDDIT_URL;
+use crate::reddit_client::AuthRedditClient;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Posts {
@@ -50,13 +48,6 @@ struct FinalPost {
     comment: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct Comment {
-    return_rtjson: bool,
-    text: String,
-    thing_id: String,
-}
-
 impl FinalPost {
     fn new(main_post_info: &MainPostInfo, post: &Post, url: String) -> FinalPost {
         let mut title = post.title_override.clone().unwrap_or(main_post_info.title.clone());
@@ -87,47 +78,25 @@ impl FinalPost {
     }
 }
 
-pub async fn post(posts: Posts, token: &str) {
+pub async fn post(posts: Posts, client: &AuthRedditClient) {
     let final_posts: Vec<FinalPost> = create_final_posts(posts);
     info!("Final posts: {:?}", final_posts);
-    let client = reqwest::Client::builder()
-        .build()
-        .expect("error during client build");
-
     for post in final_posts {
-        let full_ulr = submit_post(token, &client, &post).await;
+        let full_ulr = submit_post(&client, &post).await;
         info!("post url is {:?}", full_ulr);
 
         if post.comment.is_some() && full_ulr.is_some() {
-            submit_comment(token, &client, post.comment.clone().unwrap(), full_ulr.unwrap()).await;
+            submit_comment(&client, post.comment.clone().unwrap(), full_ulr.unwrap()).await;
         }
     }
 }
 
-async fn submit_post(token: &str, client: &Client, post: &FinalPost) -> Option<String> {
+async fn submit_post(client: &AuthRedditClient, post: &FinalPost) -> Option<String> {
     let url = format!("{}/r/{}/api/submit", OAUTH_REDDIT_URL, post.subreddit);
 
-    let result = client.post(url)
-        .bearer_auth(token)
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .header("Accept-Language", "en-us")
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.90 Safari/537.36")
-        .body(serde_urlencoded::to_string(&post).expect("serialize issue during obtain auth token"))
-        .send()
-        .await;
+    let body = client.post(url.as_str(), Some(post)).await;
 
-    let body = result
-        .expect("Result is empty")
-        .text().await
-        .expect("Body is empty");
-
-    info!("Result submit body is {:?}", body);
-
-    // limit 60 post in a second
-    let ten_millis = time::Duration::from_millis(21);
-    thread::sleep(ten_millis);
     let post_url = retrieve_post_url(post, body);
-
     match post_url {
         Some(url) => retrieve_post_id(url),
         None => None
@@ -136,13 +105,17 @@ async fn submit_post(token: &str, client: &Client, post: &FinalPost) -> Option<S
 
 fn retrieve_post_url(post: &FinalPost, body: String) -> Option<String> {
     let json: Value = serde_json::from_str(body.as_str()).expect("Json format expected");
-    let value = json.get("jquery").expect("jquery field");
+    let value = json.get("jquery");
+    if value.is_none() {
+        return None;
+    }
+    let value = value.expect("jquery field");
     let values = value.as_array().expect("some values");
     for value in values {
         let subvalues = value.as_array().expect("some values");
-        info!("array value {:?}", value);
+        debug!("array value {:?}", value);
         for subvalue in subvalues {
-            info!("array SUB value {:?}", subvalue);
+            debug!("array SUB value {:?}", subvalue);
             let possible_value = subvalue.as_array();
             if possible_value.is_none() {
                 continue;
@@ -152,7 +125,7 @@ fn retrieve_post_url(post: &FinalPost, body: String) -> Option<String> {
                 continue;
             }
             let possible_value = possible_value[0].as_str().unwrap_or("");
-            info!("Value to check {:?}", possible_value);
+            debug!("Value to check {:?}", possible_value);
             if possible_value.contains(format!("www.reddit.com/r/{}/comments", post.subreddit).as_str()) {
                 return Some(String::from(possible_value));
             }
@@ -170,56 +143,6 @@ fn retrieve_post_id(post_url: String) -> Option<String> {
     let id_position = comment_position.unwrap() + 1;
 
     parts.get(id_position).map(|id| String::from(*id))
-}
-
-async fn submit_comment(token: &str, client: &Client, comment: String, post_id: String) {
-    let post_id = format!("t3_{}", post_id);
-    info!("Post id {:?}", post_id.as_str());
-
-    let url = format!("{}/by_id/{}", OAUTH_REDDIT_URL, post_id);
-    let result = client.get(url)
-        .bearer_auth(token)
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .header("Accept-Language", "en-us")
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.90 Safari/537.36")
-        .send()
-        .await;
-
-    let body = result
-        .expect("Result is empty")
-        .text().await
-        .expect("Body is empty");
-
-    info!("Result get listing body is {:?}", body);
-
-
-    let comment = Comment {
-        return_rtjson: false,
-        text: comment,
-        thing_id: post_id,
-    };
-
-    let url = format!("{}/api/comment", OAUTH_REDDIT_URL);
-
-    let result = client.post(url)
-        .bearer_auth(token)
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .header("Accept-Language", "en-us")
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.90 Safari/537.36")
-        .body(serde_urlencoded::to_string(&comment).expect("serialize issue during obtain auth token"))
-        .send()
-        .await;
-
-    let body = result
-        .expect("Result is empty")
-        .text().await
-        .expect("Body is empty");
-
-    info!("Result submit body is {:?}", body);
-
-    // limit 60 post in a second
-    let ten_millis = time::Duration::from_millis(21);
-    thread::sleep(ten_millis);
 }
 
 fn create_final_posts(posts: Posts) -> Vec<FinalPost> {

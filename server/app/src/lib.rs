@@ -4,9 +4,12 @@ pub mod data_store;
 pub mod in_memory_data_store;
 pub mod post;
 pub mod flairs;
-mod media;
+pub mod user;
+pub mod comment;
+pub mod reddit_client;
+pub mod media;
 
-use serde_derive::{Serialize, Deserialize};
+use serde_derive::{Deserialize};
 
 const REDDIT_URL: &str = "https://www.reddit.com";
 const OAUTH_REDDIT_URL: &str = "https://oauth.reddit.com";
