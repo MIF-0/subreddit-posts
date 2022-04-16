@@ -3,7 +3,8 @@ use serde_derive::{Serialize, Deserialize};
 use serde_json::Value;
 use crate::comment::submit_comment;
 use crate::OAUTH_REDDIT_URL;
-use crate::reddit_client::AuthRedditClient;
+use crate::reddit_client::{AuthRedditClient, DeleteRequest};
+use crate::user::User;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Posts {
@@ -78,6 +79,19 @@ impl FinalPost {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct PostInfo {
+    id: String,
+    upvotes: u64,
+    name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct PostInfos {
+    after: Option<String>,
+    posts: Vec<PostInfo>,
+}
+
 pub async fn post(posts: Posts, client: &AuthRedditClient) {
     let final_posts: Vec<FinalPost> = create_final_posts(posts);
     info!("Final posts: {:?}", final_posts);
@@ -89,6 +103,27 @@ pub async fn post(posts: Posts, client: &AuthRedditClient) {
             submit_comment(&client, post.comment.clone().unwrap(), full_ulr.unwrap()).await;
         }
     }
+}
+
+pub async fn delete_with_upvotes_lt(client: &AuthRedditClient, user: &User, min_votes: u64) {
+    let mut after = None;
+    while true {
+        let posts = retrieve_all_posts(client, user, after.clone()).await;
+        if posts.posts.len().eq(&0) {
+            break;
+        }
+        for post in posts.posts {
+            if post.upvotes < min_votes {
+                let delete_request = DeleteRequest::new_json(post.name.as_str());
+                info!("Will delete {:?}", post);
+                client.delete(&delete_request).await;
+            }
+            after = Some(post.name.clone());
+        }
+    }
+
+
+    info!("Posts deleted");
 }
 
 async fn submit_post(client: &AuthRedditClient, post: &FinalPost) -> Option<String> {
@@ -158,4 +193,32 @@ fn create_final_posts(posts: Posts) -> Vec<FinalPost> {
             FinalPost::new(&posts.main_post_info, post, url)
         })
         .collect()
+}
+
+async fn retrieve_all_posts(client: &AuthRedditClient, user: &User, after: Option<String>) -> PostInfos {
+    let mut url = format!("{}{}submitted?limit=1000", OAUTH_REDDIT_URL, user.url.as_str());
+    if after.is_some() {
+        url = format!("{}&after={}", url, after.unwrap());
+    }
+    let body = client.get(url.as_str()).await;
+
+    let value: Value = serde_json::from_str(body.as_str()).expect("Json format expected");
+    debug!("The json value is {}", value);
+
+    let after = value["data"]["after"].as_str();
+
+    let posts = value["data"]["children"].as_array().unwrap();
+    let posts: Vec<PostInfo> = posts.iter().map(
+        |post| {
+            PostInfo {
+                id: String::from(post["data"]["id"].as_str().unwrap()),
+                upvotes: post["data"]["ups"].as_u64().unwrap(),
+                name: String::from(post["data"]["name"].as_str().unwrap()),
+            }
+        }
+    ).collect();
+    PostInfos {
+        after: after.map(|val| { String::from(val) }),
+        posts,
+    }
 }

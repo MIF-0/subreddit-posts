@@ -10,7 +10,7 @@ use subreddit_posts_logic::environment::Environment;
 use subreddit_posts_logic::flairs::retrieve_flairs_for;
 use subreddit_posts_logic::in_memory_data_store::InMemoryDataStore;
 use subreddit_posts_logic::login::{auth_token_for, request_login};
-use subreddit_posts_logic::post::{post, Posts};
+use subreddit_posts_logic::post::{delete_with_upvotes_lt, post, Posts};
 use subreddit_posts_logic::reddit_client::AuthRedditClient;
 use subreddit_posts_logic::user;
 use subreddit_posts_logic::user::info;
@@ -35,6 +35,7 @@ async fn main() -> io::Result<()> {
         .service(upload)
         .service(flairs)
         .service(delete_comments)
+        .service(delete_posts)
     )
         .bind("127.0.0.1:9090")?
         .run()
@@ -90,6 +91,16 @@ async fn upload(data: Data<InMemoryDataStore>) -> impl Responder {
     HttpResponse::Ok().body("Uploaded")
 }
 
+async fn try_post(file_name: &str, client: &AuthRedditClient) {
+    let content = fs::read_to_string(format!("server/{}", file_name))
+        .or_else(|_| fs::read_to_string(file_name));
+    if content.is_ok() {
+        let content = content.unwrap();
+        let posts: Posts = serde_json::from_str(&content).expect("JSON was not well-formatted");
+        post(posts, client).await;
+    }
+}
+
 #[actix_web::get("/reddit/comments/delete")]
 async fn delete_comments(data: Data<InMemoryDataStore>) -> impl Responder {
     info!("Deleting all comments");
@@ -107,14 +118,21 @@ async fn delete_comments(data: Data<InMemoryDataStore>) -> impl Responder {
     HttpResponse::Ok().body("deleted")
 }
 
-async fn try_post(file_name: &str, client: &AuthRedditClient) {
-    let content = fs::read_to_string(format!("server/{}", file_name))
-        .or_else(|_| fs::read_to_string(file_name));
-    if content.is_ok() {
-        let content = content.unwrap();
-        let posts: Posts = serde_json::from_str(&content).expect("JSON was not well-formatted");
-        post(posts, client).await;
-    }
+#[actix_web::get("/reddit/posts/delete")]
+async fn delete_posts(data: Data<InMemoryDataStore>) -> impl Responder {
+    info!("Deleting all comments");
+
+    let auth_token = data.retrieve_auth_token();
+    let client = AuthRedditClient::new(auth_token);
+
+    let user = user::info(&client).await;
+    info!("user {:?}", user);
+
+    delete_with_upvotes_lt(&client, &user, 5).await;
+
+    info!("Deleted post with ups < 5");
+
+    HttpResponse::Ok().body("deleted")
 }
 
 #[actix_web::get("/reddit/flairs")]

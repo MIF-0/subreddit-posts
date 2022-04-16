@@ -102,3 +102,12 @@ pub struct DeleteRequest {
     pub id: String,
     pub api_type: String,
 }
+
+impl DeleteRequest {
+    pub fn new_json(id: &str) -> DeleteRequest {
+        DeleteRequest {
+            id: String::from(id),
+            api_type: String::from("json"),
+        }
+    }
+}

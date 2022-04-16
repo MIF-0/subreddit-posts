@@ -53,11 +53,7 @@ pub async fn delete_all_comments(user: &User, client: &AuthRedditClient) {
     info!("Comments {:?}", comments);
 
     for comment in comments {
-        let delete_request = DeleteRequest {
-            id: String::from(comment.name.as_str()),
-            api_type: String::from("json"),
-        };
-
+        let delete_request = DeleteRequest::new_json(comment.name.as_str());
         client.delete(&delete_request).await;
     }
 }
