@@ -1,8 +1,8 @@
-use log::info;
-use serde_derive::{Serialize, Deserialize};
-use serde_json::Value;
-use crate::OAUTH_REDDIT_URL;
 use crate::reddit_client::AuthRedditClient;
+use crate::OAUTH_REDDIT_URL;
+use log::info;
+use serde_derive::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct User {
@@ -13,7 +13,6 @@ pub struct User {
     pub display_name_prefixed: String,
     pub url: String,
 }
-
 
 pub async fn info(client: &AuthRedditClient) -> User {
     let url = format!("{}/api/v1/me", OAUTH_REDDIT_URL);

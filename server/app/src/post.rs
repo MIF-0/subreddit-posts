@@ -1,10 +1,10 @@
-use log::{debug, info};
-use serde_derive::{Serialize, Deserialize};
-use serde_json::Value;
 use crate::comment::submit_comment;
-use crate::OAUTH_REDDIT_URL;
 use crate::reddit_client::{AuthRedditClient, DeleteRequest};
 use crate::user::User;
+use crate::OAUTH_REDDIT_URL;
+use log::{debug, info};
+use serde_derive::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Posts {
@@ -51,7 +51,10 @@ struct FinalPost {
 
 impl FinalPost {
     fn new(main_post_info: &MainPostInfo, post: &Post, url: String) -> FinalPost {
-        let mut title = post.title_override.clone().unwrap_or(main_post_info.title.clone());
+        let mut title = post
+            .title_override
+            .clone()
+            .unwrap_or(main_post_info.title.clone());
         if post.additional_title.is_some() {
             title.push_str(&post.additional_title.clone().unwrap());
         }
@@ -80,10 +83,11 @@ impl FinalPost {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct PostInfo {
-    id: String,
-    upvotes: u64,
-    name: String,
+pub struct PostInfo {
+    pub id: String,
+    pub upvotes: u64,
+    pub name: String,
+    pub subreddit: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -106,24 +110,47 @@ pub async fn post(posts: Posts, client: &AuthRedditClient) {
 }
 
 pub async fn delete_with_upvotes_lt(client: &AuthRedditClient, user: &User, min_votes: u64) {
-    let mut after = None;
-    while true {
+    let posts = retrieve_all_posts_with(client, user, |post| post.upvotes < min_votes).await;
+    for post in posts {
+        let delete_request = DeleteRequest::new_json(post.name.as_str());
+        info!("Will delete {:?}", post);
+        client.delete(&delete_request).await;
+    }
+    info!("Posts deleted");
+}
+
+pub async fn retrieve_all_posts_with(
+    client: &AuthRedditClient,
+    user: &User,
+    filter: impl Fn(&PostInfo) -> bool,
+) -> Vec<PostInfo> {
+    let mut after: Option<String> = None;
+    let mut result: Vec<PostInfo> = Vec::new();
+    loop {
         let posts = retrieve_all_posts(client, user, after.clone()).await;
+        info!("Retrieved {} posts", posts.posts.len());
+
+        after = posts.after.clone();
         if posts.posts.len().eq(&0) {
             break;
         }
         for post in posts.posts {
-            if post.upvotes < min_votes {
-                let delete_request = DeleteRequest::new_json(post.name.as_str());
-                info!("Will delete {:?}", post);
-                client.delete(&delete_request).await;
+            if after.is_some() {
+                let value = after.clone().unwrap();
+                if value.eq(&post.name) {
+                    continue;
+                }
             }
-            after = Some(post.name.clone());
+            if filter(&post) {
+                result.push(post);
+            }
+        }
+
+        if after.is_none() {
+            break;
         }
     }
-
-
-    info!("Posts deleted");
+    return result;
 }
 
 async fn submit_post(client: &AuthRedditClient, post: &FinalPost) -> Option<String> {
@@ -134,7 +161,7 @@ async fn submit_post(client: &AuthRedditClient, post: &FinalPost) -> Option<Stri
     let post_url = retrieve_post_url(post, body);
     match post_url {
         Some(url) => retrieve_post_id(url),
-        None => None
+        None => None,
     }
 }
 
@@ -161,7 +188,9 @@ fn retrieve_post_url(post: &FinalPost, body: String) -> Option<String> {
             }
             let possible_value = possible_value[0].as_str().unwrap_or("");
             debug!("Value to check {:?}", possible_value);
-            if possible_value.contains(format!("www.reddit.com/r/{}/comments", post.subreddit).as_str()) {
+            if possible_value
+                .contains(format!("www.reddit.com/r/{}/comments", post.subreddit).as_str())
+            {
                 return Some(String::from(possible_value));
             }
         }
@@ -181,22 +210,34 @@ fn retrieve_post_id(post_url: String) -> Option<String> {
 }
 
 fn create_final_posts(posts: Posts) -> Vec<FinalPost> {
-    posts.posts
+    posts
+        .posts
         .iter()
         .filter(|value| value.need_to_be_posted.unwrap_or(true))
         .map(|post| {
-            let body = post.body_override.clone().unwrap_or(posts.main_post_info.body.clone());
+            let body = post
+                .body_override
+                .clone()
+                .unwrap_or(posts.main_post_info.body.clone());
             let url = match posts.main_post_info.post_type.as_str() {
                 "link" => body,
-                _ => panic!("Unsupported post type")
+                _ => panic!("Unsupported post type"),
             };
             FinalPost::new(&posts.main_post_info, post, url)
         })
         .collect()
 }
 
-async fn retrieve_all_posts(client: &AuthRedditClient, user: &User, after: Option<String>) -> PostInfos {
-    let mut url = format!("{}{}submitted?limit=1000", OAUTH_REDDIT_URL, user.url.as_str());
+async fn retrieve_all_posts(
+    client: &AuthRedditClient,
+    user: &User,
+    after: Option<String>,
+) -> PostInfos {
+    let mut url = format!(
+        "{}{}submitted?limit=1000",
+        OAUTH_REDDIT_URL,
+        user.url.as_str()
+    );
     if after.is_some() {
         url = format!("{}&after={}", url, after.unwrap());
     }
@@ -208,17 +249,17 @@ async fn retrieve_all_posts(client: &AuthRedditClient, user: &User, after: Optio
     let after = value["data"]["after"].as_str();
 
     let posts = value["data"]["children"].as_array().unwrap();
-    let posts: Vec<PostInfo> = posts.iter().map(
-        |post| {
-            PostInfo {
-                id: String::from(post["data"]["id"].as_str().unwrap()),
-                upvotes: post["data"]["ups"].as_u64().unwrap(),
-                name: String::from(post["data"]["name"].as_str().unwrap()),
-            }
-        }
-    ).collect();
+    let posts: Vec<PostInfo> = posts
+        .iter()
+        .map(|post| PostInfo {
+            id: String::from(post["data"]["id"].as_str().unwrap()),
+            upvotes: post["data"]["ups"].as_u64().unwrap(),
+            name: String::from(post["data"]["name"].as_str().unwrap()),
+            subreddit: String::from(post["data"]["subreddit"].as_str().unwrap()),
+        })
+        .collect();
     PostInfos {
-        after: after.map(|val| { String::from(val) }),
+        after: after.map(|val| String::from(val)),
         posts,
     }
 }

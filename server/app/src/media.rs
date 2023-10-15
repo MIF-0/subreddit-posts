@@ -1,14 +1,13 @@
-use std::collections::HashMap;
-use log::info;
-use serde_derive::{Serialize, Deserialize};
 use crate::REDDIT_URL;
+use log::info;
+use serde_derive::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct ImageData {
     pub filepath: String,
     pub mimetype: String,
 }
-
 
 #[derive(Serialize, Deserialize, Debug)]
 struct MediaResponse {
@@ -25,7 +24,7 @@ struct MediaArgs {
 #[derive(Serialize, Deserialize, Debug)]
 struct Field {
     name: String,
-    value: String
+    value: String,
 }
 
 pub async fn upload_media(mime_prefix: &str, media_path: &str) -> (String, Option<String>) {
@@ -39,9 +38,15 @@ pub async fn upload_media(mime_prefix: &str, media_path: &str) -> (String, Optio
     ]);
     let parts = media_path.split(".");
     let file_extension = parts.last().expect("No extension found");
-    let mime_type = *mime_types.get(file_extension).expect(&format!("Can't find mimy type for extension {}", file_extension));
+    let mime_type = *mime_types.get(file_extension).expect(&format!(
+        "Can't find mimy type for extension {}",
+        file_extension
+    ));
     if !mime_type.starts_with(mime_prefix) {
-        panic!("Wrong file extension {} with expected mime type {}", file_extension, mime_prefix)
+        panic!(
+            "Wrong file extension {} with expected mime type {}",
+            file_extension, mime_prefix
+        )
     }
     let image_data = ImageData {
         filepath: String::from(media_path),
@@ -61,14 +66,13 @@ pub async fn upload_media(mime_prefix: &str, media_path: &str) -> (String, Optio
         .await;
     let body = result
         .expect("Result is empty")
-        .text().await
+        .text()
+        .await
         .expect("Body is empty");
     info!("Result body is {:?}", body);
 
-/*    let upload_media_response = serde_json::from_str(&body)
-        .expect("Bad body spec");*/
+    /*    let upload_media_response = serde_json::from_str(&body)
+    .expect("Bad body spec");*/
 
     (String::from(media_path), Some(String::from(media_path)))
 }
-
-

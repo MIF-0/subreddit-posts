@@ -1,9 +1,9 @@
-use std::{fs, io};
-use actix_web::{App, HttpResponse, HttpServer, Responder};
+use actix_web::web;
 use actix_web::web::{Data, Query};
+use actix_web::{App, HttpResponse, HttpServer, Responder};
 use log::info;
-use reqwest::Client;
 use serde_derive::Deserialize;
+use std::{fs, io};
 use subreddit_posts_logic::comment::delete_all_comments;
 use subreddit_posts_logic::data_store::DataStore;
 use subreddit_posts_logic::environment::Environment;
@@ -12,8 +12,8 @@ use subreddit_posts_logic::in_memory_data_store::InMemoryDataStore;
 use subreddit_posts_logic::login::{auth_token_for, request_login};
 use subreddit_posts_logic::post::{delete_with_upvotes_lt, post, Posts};
 use subreddit_posts_logic::reddit_client::AuthRedditClient;
-use subreddit_posts_logic::user;
-use subreddit_posts_logic::user::info;
+use subreddit_posts_logic::subreddit::get_all_from;
+use subreddit_posts_logic::{subreddit, user};
 
 #[actix_web::main]
 async fn main() -> io::Result<()> {
@@ -27,19 +27,23 @@ async fn main() -> io::Result<()> {
 
     let data = Data::new(InMemoryDataStore::new());
 
-    HttpServer::new(move || App::new()
-        .app_data(data.clone())
-        .service(hello)
-        .service(login)
-        .service(login_callback)
-        .service(upload)
-        .service(flairs)
-        .service(delete_comments)
-        .service(delete_posts)
-    )
-        .bind("127.0.0.1:9090")?
-        .run()
-        .await
+    HttpServer::new(move || {
+        App::new()
+            .app_data(data.clone())
+            .service(hello)
+            .service(login)
+            .service(login_callback)
+            .service(upload)
+            .service(flairs)
+            .service(delete_comments)
+            .service(delete_posts)
+            .service(read_from_sub)
+            .service(delete_all_from_sub)
+            .service(delete_comments_from_sub)
+    })
+    .bind("127.0.0.1:9090")?
+    .run()
+    .await
 }
 
 #[actix_web::get("/")]
@@ -58,18 +62,31 @@ async fn login(data: Data<InMemoryDataStore>) -> impl Responder {
 }
 
 #[actix_web::get("/reddit/login-callback")]
-async fn login_callback((params, data): (Query<Params>, Data<InMemoryDataStore>)) -> impl Responder {
+async fn login_callback(
+    (params, data): (Query<Params>, Data<InMemoryDataStore>),
+) -> impl Responder {
     info!("I was called");
     info!("params {:?}", params);
 
-    let login_request_id = params.state.as_ref().expect("expect state as field, but it doesn't exist");
+    let login_request_id = params
+        .state
+        .as_ref()
+        .expect("expect state as field, but it doesn't exist");
     if data
         .retrieve_login_request_id()
-        .ne(login_request_id.as_str()) {
+        .ne(login_request_id.as_str())
+    {
         panic!("Login request id are not same!!!")
     }
     let env = Environment::read_env();
-    let token = auth_token_for(&params.code.clone().expect("Expect Code field, but it doesn't exist"), env).await;
+    let token = auth_token_for(
+        &params
+            .code
+            .clone()
+            .expect("Expect Code field, but it doesn't exist"),
+        env,
+    )
+    .await;
     data.store_auth_token(token.access_token.clone());
     HttpResponse::Ok().body("Ok")
 }
@@ -85,8 +102,7 @@ async fn upload(data: Data<InMemoryDataStore>) -> impl Responder {
     let client = AuthRedditClient::new(auth_token);
     post(posts, &client).await;
 
-    try_post(".posts.possible", &client).await;
-    try_post(".posts.promo_links", &client).await;
+    try_post(".posts", &client).await;
 
     HttpResponse::Ok().body("Uploaded")
 }
@@ -111,7 +127,7 @@ async fn delete_comments(data: Data<InMemoryDataStore>) -> impl Responder {
     let user = user::info(&client).await;
     info!("user {:?}", user);
 
-    delete_all_comments(&user, &client).await;
+    delete_all_comments(&client, &user).await;
 
     info!("Deleted all comments");
 
@@ -120,7 +136,7 @@ async fn delete_comments(data: Data<InMemoryDataStore>) -> impl Responder {
 
 #[actix_web::get("/reddit/posts/delete")]
 async fn delete_posts(data: Data<InMemoryDataStore>) -> impl Responder {
-    info!("Deleting all comments");
+    info!("Deleting post with ups < 5");
 
     let auth_token = data.retrieve_auth_token();
     let client = AuthRedditClient::new(auth_token);
@@ -135,17 +151,74 @@ async fn delete_posts(data: Data<InMemoryDataStore>) -> impl Responder {
     HttpResponse::Ok().body("deleted")
 }
 
+#[actix_web::get("/reddit/sub/{sub_name}/info")]
+async fn read_from_sub(path: web::Path<String>, data: Data<InMemoryDataStore>) -> impl Responder {
+    let sub_name = path.into_inner();
+    info!("Getting info from {}", sub_name);
+    //https://www.reddit.com/r/[subreddit]/new.json?limit=100
+    let auth_token = data.retrieve_auth_token();
+    let client = AuthRedditClient::new(auth_token);
+
+    let user = user::info(&client).await;
+    info!("user {:?}", user);
+
+    subreddit::get_all_from(&client, &user, sub_name).await;
+
+    info!("Info received");
+
+    HttpResponse::Ok().body("retrieved")
+}
+
+#[actix_web::get("/reddit/sub/{sub_name}/info/delete/all")]
+async fn delete_all_from_sub(
+    path: web::Path<String>,
+    data: Data<InMemoryDataStore>,
+) -> impl Responder {
+    let sub_name = path.into_inner();
+    info!("Getting info from {}", sub_name);
+    //https://www.reddit.com/r/[subreddit]/new.json?limit=100
+    let auth_token = data.retrieve_auth_token();
+    let client = AuthRedditClient::new(auth_token);
+
+    let user = user::info(&client).await;
+    info!("user {:?}", user);
+
+    subreddit::delete_all_from(&client, &user, sub_name).await;
+
+    info!("Info received");
+
+    HttpResponse::Ok().body("retrieved")
+}
+
+#[actix_web::get("/reddit/sub/{sub_name}/info/delete/comments")]
+async fn delete_comments_from_sub(
+    path: web::Path<String>,
+    data: Data<InMemoryDataStore>,
+) -> impl Responder {
+    let sub_name = path.into_inner();
+    info!("Getting info from {}", sub_name);
+    //https://www.reddit.com/r/[subreddit]/new.json?limit=100
+    let auth_token = data.retrieve_auth_token();
+    let client = AuthRedditClient::new(auth_token);
+
+    let user = user::info(&client).await;
+    info!("user {:?}", user);
+
+    subreddit::delete_comments_from(&client, &user, sub_name).await;
+
+    info!("Info received");
+
+    HttpResponse::Ok().body("retrieved")
+}
+
 #[actix_web::get("/reddit/flairs")]
 async fn flairs(data: Data<InMemoryDataStore>) -> impl Responder {
     let content = fs::read_to_string("server/.subreddits")
         .or_else(|_| fs::read_to_string(".subreddits"))
         .expect("Something went wrong reading the file with posts");
 
-
     let client = AuthRedditClient::new(data.retrieve_auth_token());
-    let flair_info = retrieve_flairs_for(content.split(", ").collect(),
-                                         &client,
-    ).await;
+    let flair_info = retrieve_flairs_for(content.split(", ").collect(), &client).await;
 
     info!("Retrieved flairs: {:?}", flair_info);
 

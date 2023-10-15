@@ -1,15 +1,16 @@
-pub mod environment;
-pub mod login;
-pub mod data_store;
-pub mod in_memory_data_store;
-pub mod post;
-pub mod flairs;
-pub mod user;
 pub mod comment;
-pub mod reddit_client;
+pub mod data_store;
+pub mod environment;
+pub mod flairs;
+pub mod in_memory_data_store;
+pub mod login;
 pub mod media;
+pub mod post;
+pub mod reddit_client;
+pub mod subreddit;
+pub mod user;
 
-use serde_derive::{Deserialize};
+use serde_derive::Deserialize;
 
 const REDDIT_URL: &str = "https://www.reddit.com";
 const OAUTH_REDDIT_URL: &str = "https://oauth.reddit.com";
@@ -28,9 +29,12 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let url = String::from("https://www.reddit.com/r/youareart/comments/tuijnl/my_new_picturef/");
+        let url =
+            String::from("https://www.reddit.com/r/youareart/comments/tuijnl/my_new_picturef/");
         let parts: Vec<&str> = url.split("/").collect();
-        let comment_position = parts.iter().position(|part| *part == "comments")
+        let comment_position = parts
+            .iter()
+            .position(|part| *part == "comments")
             .expect("comment in link");
         let id_position = comment_position + 1;
         let id = parts.get(id_position).map(|id| String::from(*id));
